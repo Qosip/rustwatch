@@ -16,7 +16,7 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    widgets::{Block, Borders, List, ListItem},
+    widgets::{Block, Borders, List, ListItem, Sparkline},
     layout::{Layout, Constraint, Direction},
     style::{Style, Color},
     Terminal,
@@ -48,15 +48,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Lancement d'une vérification
             for site in sites.iter_mut() {
                 match monitor::check_website(&site.url).await {
-                    Ok(msg) => site.last_status = msg,
-                    Err(e) => site.last_status = format!("ERREUR : {}", e),
+                    Ok((msg, latency)) => {
+                        site.last_status = msg;
+                        // On ajoute le ping dans l'historique
+                        site.history.push(latency);
+                        if site.history.len() > 50 {
+                            site.history.remove(0);
+                        }
+                    }
+                    Err(e) => {
+                        site.last_status = format!("ERREUR : {}", e);
+                        site.history.push(0);
+                        if site.history.len() > 50 {
+                            site.history.remove(0);
+                        }
+                    }
                 }
             }
             // On relâche le verrou
             drop(sites);
 
             // Stop 5s
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     });
 
@@ -92,16 +105,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // B. On draw
         terminal.draw(|f| {
+            // 1. On découpe l'écran Verticalement
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .margin(1)
-                .constraints([Constraint::Percentage(100)].as_ref())
+                .constraints([
+                    Constraint::Percentage(50), // 50% Liste
+                    Constraint::Percentage(50), // 50% Graphique
+                ].as_ref())
                 .split(f.area());
 
-            let list = List::new(items)
-                .block(Block::default().title(" Monitoring RustWatch ").borders(Borders::ALL));
-
+            // --- ZONE 1 : LA LISTE ---
+            let list = List::new(items.clone())
+                .block(Block::default().title(" Monitoring ").borders(Borders::ALL));
             f.render_widget(list, chunks[0]);
+
+            // --- ZONE 2 : LE GRAPHIQUE ---
+            if let Some(first_site) = current_sites.first() {
+                let sparkline = Sparkline::default()
+                    .block(Block::default().title(format!(" Latence: {} - Response Time {}ms ", first_site.name, first_site.history.last().unwrap_or(&0))).borders(Borders::ALL))
+                    .data(&first_site.history)
+                    .style(Style::default().fg(Color::Cyan));
+
+                f.render_widget(sparkline, chunks[1]);
+            }
         })?;
 
         // On relâche le verrou
