@@ -4,6 +4,10 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::time::Duration;
 use std::io;
+use std::fs;
+use serde_json;
+
+use monitor::Website;
 
 use crossterm::{
     event::{self, Event, KeyCode},
@@ -14,22 +18,26 @@ use ratatui::{
     backend::CrosstermBackend,
     widgets::{Block, Borders, List, ListItem},
     layout::{Layout, Constraint, Direction},
+    style::{Style, Color},
     Terminal,
 };
 
-use monitor::Website;
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 1. CRÉATION DES DONNÉES
-    let websites = vec![
-        Website { name: "Google".to_string(), url: "https://www.google.com".to_string(), last_status: "En attente...".to_string() },
-        Website { name: "GitHub".to_string(), url: "https://github.com".to_string(), last_status: "En attente...".to_string() },
-        Website { name: "Localhost".to_string(), url: "http://localhost:8080".to_string(), last_status: "En attente...".to_string() }, // Test error
-    ];
 
-    // Liste dans un Arc<Mutex<>> partageable
-    let app_state = Arc::new(Mutex::new(websites));
+    println!("Chargement de websites.json...");
+
+    let file_content = fs::read_to_string("websites.json")
+        .expect("ERREUR: Impossible de lire websites.json.");
+
+    let mut loaded_websites: Vec<Website> = serde_json::from_str(&file_content)
+        .expect("ERREUR: Le format JSON est incorrect !");
+
+    for site in &mut loaded_websites {
+        site.last_status = "En attente...".to_string();
+    }
+
+    let app_state = Arc::new(Mutex::new(loaded_websites));
 
     // 2. LANCEMENT DU "WORKER"
     let app_state_clone = app_state.clone();
@@ -63,11 +71,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // A. On récupère les données
         let current_sites = app_state.lock().await;
 
-        // On transforme sites en "ListItem"
+        // On transforme sites en "ListItem" + couleur
         let items: Vec<ListItem> = current_sites
             .iter()
             .map(|site| {
+                // 1. On décide de la couleur
+                let style = if site.last_status.contains("SUCCÈS") {
+                    Style::default().fg(Color::Green)
+                } else if site.last_status.contains("En attente") {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default().fg(Color::Red)
+                };
+
+                // 2. On crée l'élément et on lui applique le style
                 ListItem::new(format!("{} -> {}", site.name, site.last_status))
+                    .style(style)
             })
             .collect();
 
@@ -77,7 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .direction(Direction::Vertical)
                 .margin(1)
                 .constraints([Constraint::Percentage(100)].as_ref())
-                .split(f.size());
+                .split(f.area());
 
             let list = List::new(items)
                 .block(Block::default().title(" Monitoring RustWatch ").borders(Borders::ALL));

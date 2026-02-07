@@ -1,0 +1,14 @@
+[
+  {
+    "name": "Google",
+    "url": "https://www.google.com"
+  },
+  {
+    "name": "Portfolio",
+    "url": "https://frvncso.fr"
+  },
+  {
+    "name": "Site Introuvable",
+    "url": "http://localhost:9999"
+  }
+]
