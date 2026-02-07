@@ -6,6 +6,7 @@ use std::time::Duration;
 use std::io;
 use std::fs;
 use serde_json;
+use crossterm::event::KeyEventKind;
 
 use monitor::Website;
 
@@ -16,7 +17,7 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    widgets::{Block, Borders, List, ListItem},
+    widgets::{Block, Borders, List, ListItem, Sparkline},
     layout::{Layout, Constraint, Direction},
     style::{Style, Color},
     Terminal,
@@ -48,15 +49,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Lancement d'une vérification
             for site in sites.iter_mut() {
                 match monitor::check_website(&site.url).await {
-                    Ok(msg) => site.last_status = msg,
-                    Err(e) => site.last_status = format!("ERREUR : {}", e),
+                    Ok((msg, latency)) => {
+                        site.last_status = msg;
+                        // On ajoute le ping dans l'historique
+                        site.history.push(latency);
+                        if site.history.len() > 50 {
+                            site.history.remove(0);
+                        }
+                    }
+                    Err(e) => {
+                        site.last_status = format!("ERREUR : {}", e);
+                        site.history.push(0);
+                        if site.history.len() > 50 {
+                            site.history.remove(0);
+                        }
+                    }
                 }
             }
             // On relâche le verrou
             drop(sites);
 
             // Stop 5s
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     });
 
@@ -67,6 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
+    let mut selected_index = 0;
     loop {
         // A. On récupère les données
         let current_sites = app_state.lock().await;
@@ -74,34 +89,56 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // On transforme sites en "ListItem" + couleur
         let items: Vec<ListItem> = current_sites
             .iter()
-            .map(|site| {
+            .enumerate()
+            .map(|(i,site)| {
                 // 1. On décide de la couleur
                 let style = if site.last_status.contains("SUCCÈS") {
-                    Style::default().fg(Color::Green)
+                    Color::Green
                 } else if site.last_status.contains("En attente") {
-                    Style::default().fg(Color::Yellow)
+                    Color::Yellow
                 } else {
-                    Style::default().fg(Color::Red)
+                    Color::Red
                 };
 
+                let prefix = if i == selected_index { ">> " } else { "   " };
+
                 // 2. On crée l'élément et on lui applique le style
-                ListItem::new(format!("{} -> {}", site.name, site.last_status))
-                    .style(style)
+                ListItem::new(format!("{}{}", prefix, format!("{} -> {}", site.name, site.last_status)))
+                    .style(Style::default().fg(style))
             })
             .collect();
 
         // B. On draw
         terminal.draw(|f| {
+            // 1. On découpe l'écran Verticalement
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .margin(1)
-                .constraints([Constraint::Percentage(100)].as_ref())
+                .constraints([
+                    Constraint::Percentage(50), // 50% Liste
+                    Constraint::Percentage(50), // 50% Graphique
+                ].as_ref())
                 .split(f.area());
 
-            let list = List::new(items)
-                .block(Block::default().title(" Monitoring RustWatch ").borders(Borders::ALL));
-
+            // --- ZONE 1 : LA LISTE ---
+            let list = List::new(items.clone())
+                .block(Block::default().title(" Monitoring ").borders(Borders::ALL));
             f.render_widget(list, chunks[0]);
+
+            // --- ZONE 2 : LE GRAPHIQUE SELECTIONNE ---
+            if let Some(selected_site) = items.get(selected_index).and_then(|_| current_sites.get(selected_index)) {
+                let sparkline = Sparkline::default()
+                    .block(Block::default()
+                        .title(format!(" Latence: {} - Ping Actuel: {} ms ",
+                                       selected_site.name,
+                                       selected_site.history.last().unwrap_or(&0)
+                        ))
+                        .borders(Borders::ALL))
+                    .data(&selected_site.history)
+                    .style(Style::default().fg(Color::Cyan));
+
+                f.render_widget(sparkline, chunks[1]);
+            }
         })?;
 
         // On relâche le verrou
@@ -110,8 +147,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // C. Gestion du clavier
         if event::poll(Duration::from_millis(200))? {
             if let Event::Key(key) = event::read()? {
-                if key.code == KeyCode::Char('q') {
-                    break;
+                if key.kind == KeyEventKind::Press {
+                    match key.code {
+                        KeyCode::Char('q') => break,
+
+                        // FLÈCHE BAS
+                        KeyCode::Down => {
+                            let current_sites = app_state.lock().await;
+                            // On ne descend que si on n'est pas déjà tout en bas
+                            if selected_index < current_sites.len() - 1 {
+                                selected_index += 1;
+                            }
+                        }
+
+                        // FLÈCHE HAUT
+                        KeyCode::Up => {
+                            // On ne monte que si on n'est pas déjà tout en haut (0)
+                            if selected_index > 0 {
+                                selected_index -= 1;
+                            }
+                        }
+
+                        _ => {} // On ignore les autres touches
+                    }
                 }
             }
         }
