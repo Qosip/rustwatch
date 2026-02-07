@@ -14,6 +14,7 @@ use ratatui::{
     backend::CrosstermBackend,
     widgets::{Block, Borders, List, ListItem},
     layout::{Layout, Constraint, Direction},
+    style::{Style, Color},
     Terminal,
 };
 
@@ -63,11 +64,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // A. On récupère les données
         let current_sites = app_state.lock().await;
 
-        // On transforme sites en "ListItem"
+        // On transforme sites en "ListItem" + couleur
         let items: Vec<ListItem> = current_sites
             .iter()
             .map(|site| {
+                // 1. On décide de la couleur
+                let style = if site.last_status.contains("SUCCÈS") {
+                    Style::default().fg(Color::Green)
+                } else if site.last_status.contains("En attente") {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default().fg(Color::Red)
+                };
+
+                // 2. On crée l'élément et on lui applique le style
                 ListItem::new(format!("{} -> {}", site.name, site.last_status))
+                    .style(style)
             })
             .collect();
 
