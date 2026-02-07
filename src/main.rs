@@ -6,6 +6,7 @@ use std::time::Duration;
 use std::io;
 use std::fs;
 use serde_json;
+use crossterm::event::KeyEventKind;
 
 use monitor::Website;
 
@@ -80,6 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
+    let mut selected_index = 0;
     loop {
         // A. On récupère les données
         let current_sites = app_state.lock().await;
@@ -87,19 +89,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // On transforme sites en "ListItem" + couleur
         let items: Vec<ListItem> = current_sites
             .iter()
-            .map(|site| {
+            .enumerate()
+            .map(|(i,site)| {
                 // 1. On décide de la couleur
                 let style = if site.last_status.contains("SUCCÈS") {
-                    Style::default().fg(Color::Green)
+                    Color::Green
                 } else if site.last_status.contains("En attente") {
-                    Style::default().fg(Color::Yellow)
+                    Color::Yellow
                 } else {
-                    Style::default().fg(Color::Red)
+                    Color::Red
                 };
 
+                let prefix = if i == selected_index { ">> " } else { "   " };
+
                 // 2. On crée l'élément et on lui applique le style
-                ListItem::new(format!("{} -> {}", site.name, site.last_status))
-                    .style(style)
+                ListItem::new(format!("{}{}", prefix, format!("{} -> {}", site.name, site.last_status)))
+                    .style(Style::default().fg(style))
             })
             .collect();
 
@@ -120,11 +125,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .block(Block::default().title(" Monitoring ").borders(Borders::ALL));
             f.render_widget(list, chunks[0]);
 
-            // --- ZONE 2 : LE GRAPHIQUE ---
-            if let Some(first_site) = current_sites.first() {
+            // --- ZONE 2 : LE GRAPHIQUE SELECTIONNE ---
+            if let Some(selected_site) = items.get(selected_index).and_then(|_| current_sites.get(selected_index)) {
                 let sparkline = Sparkline::default()
-                    .block(Block::default().title(format!(" Latence: {} - Response Time {}ms ", first_site.name, first_site.history.last().unwrap_or(&0))).borders(Borders::ALL))
-                    .data(&first_site.history)
+                    .block(Block::default()
+                        .title(format!(" Latence: {} - Ping Actuel: {} ms ",
+                                       selected_site.name,
+                                       selected_site.history.last().unwrap_or(&0)
+                        ))
+                        .borders(Borders::ALL))
+                    .data(&selected_site.history)
                     .style(Style::default().fg(Color::Cyan));
 
                 f.render_widget(sparkline, chunks[1]);
@@ -137,8 +147,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // C. Gestion du clavier
         if event::poll(Duration::from_millis(200))? {
             if let Event::Key(key) = event::read()? {
-                if key.code == KeyCode::Char('q') {
-                    break;
+                if key.kind == KeyEventKind::Press {
+                    match key.code {
+                        KeyCode::Char('q') => break,
+
+                        // FLÈCHE BAS
+                        KeyCode::Down => {
+                            let current_sites = app_state.lock().await;
+                            // On ne descend que si on n'est pas déjà tout en bas
+                            if selected_index < current_sites.len() - 1 {
+                                selected_index += 1;
+                            }
+                        }
+
+                        // FLÈCHE HAUT
+                        KeyCode::Up => {
+                            // On ne monte que si on n'est pas déjà tout en haut (0)
+                            if selected_index > 0 {
+                                selected_index -= 1;
+                            }
+                        }
+
+                        _ => {} // On ignore les autres touches
+                    }
                 }
             }
         }
