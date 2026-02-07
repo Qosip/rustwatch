@@ -2,13 +2,13 @@ use reqwest;
 use anyhow::Result;
 use std::time::Duration;
 
-// Une structure, c'est comme un plan de construction.
-// On dit : "Un Website, c'est un truc qui a une url et un nom".
-// "Debug" permet d'afficher la structure dans la console facilement.
-#[derive(Debug, Clone)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Website {
     pub url: String,
     pub name: String,
+    #[serde(default)]
     pub last_status: String,
 }
 
