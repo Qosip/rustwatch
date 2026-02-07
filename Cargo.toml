@@ -1,0 +1,18 @@
+[package]
+name = "rustwatch"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Tokio : Le moteur asynchrone.
+# "macros" et "rt-multi-thread" sont nécessaires pour que ça tourne efficacement.
+tokio = { version = "1", features = ["full"] }
+
+# Reqwest : Le client HTTP
+reqwest = { version = "0.11" }
+
+# Anyhow : Pour gérer les erreurs simplement
+anyhow = "1.0"
+
+ratatui = "0.26"
+crossterm = "0.27"
