@@ -5,7 +5,6 @@ use tokio::sync::Mutex;
 use std::time::Duration;
 use std::io;
 use std::fs;
-use serde_json;
 use crossterm::event::KeyEventKind;
 
 use monitor::Website;
@@ -105,7 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let prefix = if i == selected_index { ">> " } else { "   " };
 
                 // 2. On crée l'élément et on lui applique le style
-                ListItem::new(format!("{}{}", prefix, format!("{} -> {}", site.name, site.last_status)))
+                ListItem::new(format!("{}{} -> {}", prefix, site.name, site.last_status))
                     .style(Style::default().fg(style))
             })
             .collect();
@@ -147,39 +146,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         drop(current_sites);
 
         // C. Gestion du clavier
-        if event::poll(Duration::from_millis(200))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Char('q') => break,
-
-                        // FLÈCHE BAS
-                        KeyCode::Down => {
-                            let current_sites = app_state.lock().await;
-                            if selected_index < current_sites.len() - 1 {
-                                selected_index += 1;
-                            }
-                            else {
-                                selected_index = 0;
-                            }
+        if event::poll(Duration::from_millis(200))?
+            && let Event::Key(key) = event::read()?
+            && key.kind == KeyEventKind::Press {
+                match key.code {
+                    KeyCode::Char('q') => break,
+                    // FLÈCHE BAS
+                    KeyCode::Down => {
+                        let current_sites = app_state.lock().await;
+                        if selected_index < current_sites.len() - 1 {
+                            selected_index += 1;
                         }
-
-                        // FLÈCHE HAUT
-                        KeyCode::Up => {
-                            if selected_index > 0 {
-                                selected_index -= 1;
-                            }
-                            else {
-                                let current_sites = app_state.lock().await;
-                                selected_index = current_sites.len() - 1;
-                            }
+                        else {
+                            selected_index = 0;
                         }
-
-                        _ => {} // On ignore les autres touches
                     }
+
+                    // FLÈCHE HAUT
+                    KeyCode::Up => {
+                        if selected_index > 0 {
+                            selected_index -= 1;
+                        }
+                        else {
+                            let current_sites = app_state.lock().await;
+                            selected_index = current_sites.len() - 1;
+                        }
+                    }
+
+                    _ => {} // On ignore les autres touches
                 }
             }
-        }
     }
 
     // 4. NETTOYAGE

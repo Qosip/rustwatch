@@ -1,4 +1,3 @@
-use reqwest;
 use anyhow::Result;
 use std::time::{Duration, Instant};
 
