@@ -44,32 +44,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_state_clone = app_state.clone();
     tokio::spawn(async move {
         loop {
-            let mut sites = app_state_clone.lock().await;
+            // On prend le verrou juste pour copier les URLs à vérifier
+            let sites_to_check: Vec<(usize, String)> = {
+                let sites = app_state_clone.lock().await;
+                sites.iter().enumerate().map(|(i, s)| (i, s.url.clone())).collect()
+            }; // On relâche le verrou
 
-            // Lancement d'une vérification
-            for site in sites.iter_mut() {
-                match monitor::check_website(&site.url).await {
-                    Ok((msg, latency)) => {
-                        site.last_status = msg;
-                        // On ajoute le ping dans l'historique
-                        site.history.push(latency);
-                        if site.history.len() > 50 {
-                            site.history.remove(0);
+            // Requête sans bloquer l'UI
+            for (index, url) in sites_to_check {
+                let result = monitor::check_website(&url).await;
+
+                // On prend le verrou pour mettre à jour le site
+                let mut sites = app_state_clone.lock().await;
+                if let Some(site) = sites.get_mut(index) {
+                    match result {
+                        Ok((msg, latency)) => {
+                            site.last_status = msg;
+                            site.history.push(latency);
+                            if site.history.len() > 50 { site.history.remove(0); }
                         }
-                    }
-                    Err(e) => {
-                        site.last_status = format!("ERREUR : {}", e);
-                        site.history.push(0);
-                        if site.history.len() > 50 {
-                            site.history.remove(0);
+                        Err(e) => {
+                            site.last_status = format!("ERREUR : {}", e);
+                            site.history.push(0);
+                            if site.history.len() > 50 { site.history.remove(0); }
                         }
                     }
                 }
             }
-            // On relâche le verrou
-            drop(sites);
 
-            // Stop 5s
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     });
@@ -154,17 +156,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // FLÈCHE BAS
                         KeyCode::Down => {
                             let current_sites = app_state.lock().await;
-                            // On ne descend que si on n'est pas déjà tout en bas
                             if selected_index < current_sites.len() - 1 {
                                 selected_index += 1;
+                            }
+                            else {
+                                selected_index = 0;
                             }
                         }
 
                         // FLÈCHE HAUT
                         KeyCode::Up => {
-                            // On ne monte que si on n'est pas déjà tout en haut (0)
                             if selected_index > 0 {
                                 selected_index -= 1;
+                            }
+                            else {
+                                let current_sites = app_state.lock().await;
+                                selected_index = current_sites.len() - 1;
                             }
                         }
 
